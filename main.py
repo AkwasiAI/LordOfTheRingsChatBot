@@ -5,15 +5,13 @@ from langchain.prompts import PromptTemplate
 from PIL import Image
 
 def load_chain():
-    """Logic for loading the chain you want to use should go here."""
     llm = OpenAI(temperature=0)
     chain = ConversationChain(llm=llm)
     return chain
 
 chain = load_chain()
 
-image = Image.open('frodo.jpg')
-st.set_page_config(page_title="Lord of the Rings Demo", page_icon=image, layout="wide")
+st.set_page_config(page_title="Lord of the Rings Demo", layout="wide")
 with st.sidebar:
     choose_character = st.sidebar.selectbox("Select a character", ("Frodo", "Gandalf"),index=None, placeholder="Select a character")
 st.header("Lord of the Rings Demo")
@@ -36,12 +34,13 @@ if user_input:
     if not choose_character:
         st.error("Please select a character")
         st.stop()
+    character_chatbot = Image.open(f"{choose_character.lower()}.jpg")
 
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.session_state.messages.append({"role": "user", "content": character_chatbot})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    with st.chat_message("assistant",avatar=image):
+    with st.chat_message("assistant",avatar=character_chatbot):
         output = chain.run(input=user_input)
         st.markdown(output)
     st.session_state.messages.append({"role": "assistant", "content": output})
