@@ -1,19 +1,84 @@
 import streamlit as st
-from langchain.chains import ConversationChain
-from langchain.llms import OpenAI
-from langchain.prompts import PromptTemplate
+from langchain.chains import ConversationalRetrievalChain
+
+from langchain.document_loaders import PyPDFLoader
+from langchain.chat_models import ChatOpenAI
+import openai
+from langchain.memory import ConversationBufferMemory
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import DocArrayInMemorySearch
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from PIL import Image
+import os 
 
-def load_chain():
-    llm = OpenAI(temperature=0)
-    chain = ConversationChain(llm=llm)
-    return chain
+def setup_qa_chain(user_input):
+    # Load documents
+    loader = PyPDFLoader("books.pdf")
+    data = loader.load()
+    
+    # Split documents
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,
+        chunk_overlap=200
+    )
+    splits = text_splitter.split_documents(data)
 
-chain = load_chain()
+    # Create embeddings and store in vectordb
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectordb = DocArrayInMemorySearch.from_documents(splits, embeddings)
+
+    # Define retriever
+    retriever = vectordb.as_retriever(
+        search_type='mmr',
+        search_kwargs={'k':4, 'fetch_k':4}
+    )
+
+    # Setup memory for contextual conversation        
+    memory = ConversationBufferMemory(
+        memory_key='chat_history',
+        return_messages=True
+    )
+
+    #Prompt template 
+
+    general_system_template = r""" 
+        Imagine you are Frodo Baggins from Lord of the Rings. Answer the question as best as you can. If you do not know say. Answer in the tone of Frodo Baggins. 
+        ----
+        {context}
+        ----
+        """
+    general_user_template = "Question:```{question}```"
+    messages = [
+            SystemMessagePromptTemplate.from_template(general_system_template),
+            HumanMessagePromptTemplate.from_template(general_user_template)
+    ]
+    qa_prompt = ChatPromptTemplate.from_messages( messages )
+
+    combine_docs_chain_kwargs = {'prompt' : qa_prompt}
+
+    # Setup LLM and QA chain
+    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.2, streaming=False)
+    qa_chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever, memory=memory, verbose=True, combine_docs_chain_kwargs= combine_docs_chain_kwargs)
+    return qa_chain
+
 
 st.set_page_config(page_title="Lord of the Rings Demo", layout="wide")
 with st.sidebar:
     choose_character = st.sidebar.selectbox("Select a character", ("Frodo", "Gandalf"),index=None, placeholder="Select a character")
+    openai_api_key = st.sidebar.text_input(
+        label="OpenAI API Key",
+        type="password",
+        value=st.session_state['OPENAI_API_KEY'] if 'OPENAI_API_KEY' in st.session_state else '',
+        placeholder="sk-..."
+        )
+    if openai_api_key:
+        st.session_state['OPENAI_API_KEY'] = openai_api_key
+        os.environ['OPENAI_API_KEY'] = openai_api_key
+    else:
+        st.error("Please add your OpenAI API key to continue.")
+        st.info("Obtain your key from this link: https://platform.openai.com/account/api-keys")
+        st.stop()
 st.header("Lord of the Rings Demo")
 
 
@@ -41,6 +106,7 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant",avatar=character_chatbot):
-        output = chain.run(input=user_input)
+        qa_chain = setup_qa_chain(user_input)
+        output = qa_chain.run({"question": user_input})
         st.markdown(output)
     st.session_state.messages.append({"role": "assistant", "content": output})
